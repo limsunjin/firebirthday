@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#050817">
+<title>생일 축하 불꽃놀이</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 85%, #20234d 0%, #0b1030 42%, #02030b 100%);
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: manipulation; }
+  .vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 1;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.38) 100%);
+  }
+  .ui {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+    padding: clamp(30px, 7vh, 72px) 18px 0; text-align: center; pointer-events: none;
+  }
+  .eyebrow {
+    color: #ffe8a6; font-size: clamp(11px, 2.8vw, 15px); letter-spacing: .42em;
+    text-shadow: 0 0 14px #ff9d5c; margin-bottom: 10px;
+  }
+  h1 {
+    margin: 0; color: #fff8e8; font-size: clamp(38px, 10vw, 82px);
+    letter-spacing: .08em; line-height: 1.15;
+    text-shadow: 0 0 12px #ffd66b, 0 0 32px #ff7a3d, 0 0 65px #ff4b91;
+    animation: glow 2.8s ease-in-out infinite alternate;
+  }
+  @keyframes glow { from { filter: brightness(.95); } to { filter: brightness(1.22); } }
+  .message {
+    margin: 16px auto 0; max-width: 700px; color: #e6e9ff;
+    font-size: clamp(15px, 3.8vw, 23px); line-height: 1.6;
+    text-shadow: 0 2px 12px #000, 0 0 18px #8295ff;
+  }
+  .hint {
+    margin: 14px 0 0; color: #bdc8ff; font-size: clamp(12px, 3vw, 16px);
+    opacity: .9; transition: opacity .8s;
+  }
+  .hint.hide { opacity: 0; }
+  .controls {
+    position: fixed; z-index: 4; left: 0; right: 0; bottom: max(18px, env(safe-area-inset-bottom));
+    display: flex; justify-content: center; align-items: center; gap: 10px; padding: 0 12px;
+  }
+  button {
+    border: 1px solid rgba(255,255,255,.32); border-radius: 999px;
+    color: white; background: rgba(255,255,255,.13); backdrop-filter: blur(12px);
+    padding: 12px 17px; font-size: 14px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 5px 24px rgba(0,0,0,.25); touch-action: manipulation;
+  }
+  button:active { transform: scale(.96); }
+  #mute { position: fixed; top: 12px; right: 12px; z-index: 5; width: 46px; height: 46px; padding: 0; font-size: 21px; }
+  .signature {
+    position: fixed; bottom: 82px; left: 0; right: 0; text-align: center;
+    color: rgba(255,239,198,.68); font-size: 11px; letter-spacing: .2em; z-index: 2; pointer-events: none;
+  }
+  @media (max-height: 600px) {
+    .ui { padding-top: 22px; } h1 { font-size: clamp(32px, 8vw, 58px); }
+    .message { margin-top: 7px; } .hint { margin-top: 6px; }
+    .signature { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="sky" aria-label="화면을 터치하면 불꽃놀이가 펼쳐집니다"></canvas>
+<div class="vignette"></div>
+<button id="mute" aria-label="소리 켜기/끄기" title="소리 켜기/끄기">🔊</button>
+<div class="ui">
+  <div class="eyebrow">A NIGHT FULL OF WISHES</div>
+  <h1>생일 축하해!</h1>
+  <div class="message">오늘 가장 빛나는 주인공에게<br>행복과 사랑이 가득한 하루가 되길 ✨</div>
+  <p class="hint" id="hint">화면을 터치하면 축하 불꽃이 터져요 · 소리는 첫 터치 후 시작돼요</p>
+</div>
+<div class="signature">MAKE A WISH · YOUR SPECIAL DAY</div>
+<div class="controls">
+  <button id="auto">✨ 자동 불꽃 켜기</button>
+  <button id="big">🎆 크게 터뜨리기</button>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('sky');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const hint = document.getElementById('hint');
+  const muteBtn = document.getElementById('mute');
+  const autoBtn = document.getElementById('auto');
+  const bigBtn = document.getElementById('big');
+
+  let W = 0, H = 0, dpr = 1, stars = [], particles = [], rockets = [];
+  let autoMode = true, autoTimer = 0, lastFrame = 0;
+  const rand = (a,b) => Math.random() * (b-a) + a;
+  const pick = a => a[Math.floor(Math.random()*a.length)];
+  const palettes = [[45,52,60],[185,195,205],[275,285,295],[325,335,345],[5,15,25],[115,130,145]];
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    canvas.width = Math.floor(W*dpr); canvas.height = Math.floor(H*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    stars = Array.from({length: Math.floor(W*H/3300)}, () => ({
+      x: rand(0,W), y: rand(0,H*.9), r: rand(.35,1.5), phase: rand(0,Math.PI*2), speed: rand(.7,1.8)
+    }));
+  }
+  addEventListener('resize', resize); resize();
+
+  function addParticle(x,y,vx,vy,hue,life,size,gravity=.035, sparkle=false) {
+    particles.push({x,y,vx,vy,life,maxLife:life,decay:rand(.006,.014),hue,size,gravity,
+      drag:rand(.982,.993), sparkle, twinkle:rand(0,Math.PI*2)});
+  }
+  function burst(x,y,mode='normal') {
+    const hue = pick(pick(palettes));
+    const count = mode==='grand' ? 230 : mode==='auto' ? 105 : 125;
+    const base = mode==='grand' ? rand(4.2,7.4) : rand(3.1,5.6);
+    const style = Math.floor(rand(0,4));
+    for(let i=0;i<count;i++) {
+      const a = Math.PI*2*i/count + rand(-.035,.035);
+      const speed = base * (style===1 ? Math.sqrt(Math.random()) : rand(.55,1.08));
+      const h = (hue + rand(-18,25) + 360)%360;
+      addParticle(x,y,Math.cos(a)*speed,Math.sin(a)*speed,h,rand(.75,1.35),rand(1.2,3.1),.035,Math.random()<.25);
+    }
+    // 반짝이는 금빛 잔광
+    for(let i=0;i<(mode==='grand'?85:35);i++) {
+      const a=rand(0,Math.PI*2), s=rand(.5,4.5);
+      addParticle(x,y,Math.cos(a)*s,Math.sin(a)*s,rand(38,55),rand(.45,.9),rand(1,2.5),.045,true);
+    }
+    // 큰 불꽃은 바깥쪽에 한 겹 더 퍼지는 링
+    if(mode==='grand') {
+      setTimeout(() => {
+        for(let i=0;i<95;i++) {
+          const a=Math.PI*2*i/95, s=rand(2.5,3.5);
+          addParticle(x,y,Math.cos(a)*s,Math.sin(a)*s,rand(185,220),rand(.7,1),2,.02,true);
+        }
+      }, 180);
+    }
+    flash = Math.max(flash, mode==='grand' ? .24 : .11);
+    playFirework(mode);
+  }
+
+  function launch(x, targetY, mode='normal') {
+    rockets.push({x, y:H+8, vx:rand(-.8,.8), vy:rand(-10,-14), targetY, hue:pick([45,190,280,330,15]), mode, trail:[]});
+  }
+  let flash=0;
+  function frame(t) {
+    const dt = Math.min((t-lastFrame)/16.67 || 1, 2); lastFrame=t;
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle='rgba(2,4,16,.22)'; ctx.fillRect(0,0,W,H);
+    // 별 반짝임
+    for(const s of stars) {
+      const a=.25+.65*(.5+.5*Math.sin(t/700*s.speed+s.phase));
+      ctx.fillStyle=`rgba(255,255,255,${a})`;
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+    }
+    // 로켓 상승 궤적
+    ctx.globalCompositeOperation='lighter';
+    for(let i=rockets.length-1;i>=0;i--) {
+      const r=rockets[i];
+      r.trail.push({x:r.x,y:r.y}); if(r.trail.length>9) r.trail.shift();
+      r.x+=r.vx*dt; r.y+=r.vy*dt; r.vy+=.12*dt;
+      r.trail.forEach((p,j)=>{
+        ctx.fillStyle=`hsla(${r.hue},100%,75%,${j/r.trail.length*.65})`;
+        ctx.beginPath(); ctx.arc(p.x,p.y,1.2+j*.12,0,Math.PI*2); ctx.fill();
+      });
+      if(r.y<=r.targetY || r.vy>=-1) {
+        burst(r.x,r.y,r.mode); rockets.splice(i,1);
+      }
+    }
+    // 불꽃 입자
+    for(let i=particles.length-1;i>=0;i--) {
+      const p=particles[i];
+      p.vx*=p.drag; p.vy=p.vy*p.drag+p.gravity*dt;
+      p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=p.decay*dt; p.twinkle+=.15*dt;
+      if(p.life<=0 || p.x<-40 || p.x>W+40 || p.y>H+40) { particles.splice(i,1); continue; }
+      const alpha=Math.max(0,p.life/p.maxLife)*(p.sparkle ? (.65+.35*Math.sin(p.twinkle)) : 1);
+      ctx.fillStyle=`hsla(${p.hue},100%,${p.sparkle?78:62}%,${alpha})`;
+      ctx.shadowBlur=p.sparkle?10:5; ctx.shadowColor=`hsl(${p.hue},100%,65%)`;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size*(.45+.55*p.life/p.maxLife),0,Math.PI*2); ctx.fill();
+    }
+    ctx.shadowBlur=0;
+    if(flash>0) { ctx.fillStyle=`rgba(255,245,220,${flash})`; ctx.fillRect(0,0,W,H); flash*=.78; if(flash<.01)flash=0; }
+    ctx.globalCompositeOperation='source-over';
+
+    if(autoMode && t-autoTimer>850) {
+      autoTimer=t;
+      const x=rand(W*.13,W*.87), y=rand(H*.18,H*.62);
+      launch(x,y,Math.random()<.18?'grand':'auto');
+      if(Math.random()<.3) setTimeout(()=>launch(rand(W*.15,W*.85),rand(H*.2,H*.55),'auto'),rand(180,450));
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Web Audio: 외부 음원 없이 배경 아르페지오와 폭죽 효과음을 합성
+  let ac=null, master=null, musicGain=null, sfxGain=null, noiseBuffer=null;
+  let muted=false, musicTimer=null, nextNote=0, step=0;
+  const chords=[
+    [261.63,329.63,392,523.25], [220,261.63,329.63,440],
+    [174.61,220,261.63,349.23], [196,246.94,293.66,392]
+  ];
+  function initAudio() {
+    if(ac) { if(ac.state==='suspended'&&!muted) ac.resume(); return; }
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    ac=new AC();
+    master=ac.createGain(); master.gain.value=muted?0:.72; master.connect(ac.destination);
+    musicGain=ac.createGain(); musicGain.gain.value=.18; musicGain.connect(master);
+    sfxGain=ac.createGain(); sfxGain.gain.value=.85; sfxGain.connect(master);
+    noiseBuffer=ac.createBuffer(1,ac.sampleRate,ac.sampleRate);
+    const data=noiseBuffer.getChannelData(0);
+    for(let i=0;i<data.length;i++) data[i]=Math.random()*2-1;
+    nextNote=ac.currentTime+.1;
+    musicTimer=setInterval(scheduleMusic,90);
+  }
+  function note(freq,start,dur,vol,type='sine',dest=musicGain) {
+    if(!ac||!dest)return;
+    const osc=ac.createOscillator(), gain=ac.createGain();
+    osc.type=type; osc.frequency.setValueAtTime(freq,start);
+    gain.gain.setValueAtTime(.0001,start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(.0002,vol),start+.035);
+    gain.gain.exponentialRampToValueAtTime(.0001,start+dur);
+    osc.connect(gain); gain.connect(dest); osc.start(start); osc.stop(start+dur+.04);
+  }
+  function scheduleMusic() {
+    if(!ac||muted)return;
+    while(nextNote<ac.currentTime+.28) {
+      const chord=chords[Math.floor(step/8)%4], pos=[0,1,2,3,2,1,2,1][step%8];
+      note(chord[pos],nextNote,.48,.19,'triangle');
+      if(step%8===0) note(chord[0]/2,nextNote,1.8,.20,'sine');
+      if(step%8===4) note(chord[2]/2,nextNote,.9,.10,'sine');
+      nextNote+=.34; step++;
+    }
+  }
+  function noise(start,dur,vol,low,high) {
+    if(!ac||!noiseBuffer)return;
+    const src=ac.createBufferSource(); src.buffer=noiseBuffer;
+    const filter=ac.createBiquadFilter(); filter.type='lowpass';
+    filter.frequency.setValueAtTime(low,start); filter.frequency.exponentialRampToValueAtTime(high,start+dur);
+    const gain=ac.createGain(); gain.gain.setValueAtTime(vol,start);
+    gain.gain.exponentialRampToValueAtTime(.0001,start+dur);
+    src.connect(filter); filter.connect(gain); gain.connect(sfxGain);
+    src.start(start,Math.random()*.4); src.stop(start+dur+.02);
+  }
+  function playFirework(mode) {
+    if(!ac||muted)return;
+    const t=ac.currentTime, big=mode==='grand';
+    const osc=ac.createOscillator(), g=ac.createGain();
+    osc.type='sine'; osc.frequency.setValueAtTime(big?125:155,t);
+    osc.frequency.exponentialRampToValueAtTime(32,t+(big?.72:.48));
+    g.gain.setValueAtTime(big?.7:.48,t); g.gain.exponentialRampToValueAtTime(.0001,t+(big?.8:.55));
+    osc.connect(g); g.connect(sfxGain); osc.start(t); osc.stop(t+.85);
+    noise(t,big?.8:.55,big?.48:.35,2600,140);
+    const pops=big?24:13;
+    for(let i=0;i<pops;i++) noise(t+rand(.08,1.1),.035,rand(.035,.09),rand(3500,7000),1800);
+    const f=pick([523.25,587.33,659.25,783.99,880,1046.5]);
+    note(f,t+.015,1.15,.22,'sine',sfxGain);
+    note(f*2,t+.02,.55,.07,'sine',sfxGain);
+  }
+  function setMuted(value) {
+    muted=value; muteBtn.textContent=muted?'🔇':'🔊';
+    if(ac) {
+      master.gain.setTargetAtTime(muted?0:.72,ac.currentTime,.06);
+      if(!muted&&ac.state==='suspended') ac.resume();
+    }
+  }
+  muteBtn.addEventListener('click',()=>{initAudio();setMuted(!muted);});
+  document.addEventListener('visibilitychange',()=>{if(!ac)return;if(document.hidden)ac.suspend();else if(!muted)ac.resume();});
+
+  function userFirework(x,y,mode='normal') {
+    initAudio(); if(ac&&ac.state==='suspended'&&!muted)ac.resume();
+    launch(x,Math.max(70,Math.min(y,H*.78)),mode);
+    hint.classList.add('hide');
+  }
+  canvas.addEventListener('pointerdown',e=>{
+    e.preventDefault(); userFirework(e.clientX,e.clientY,Math.random()<.16?'grand':'normal');
+  });
+  autoBtn.addEventListener('click',()=>{
+    autoMode=!autoMode; autoBtn.textContent=autoMode?'✨ 자동 불꽃 끄기':'✨ 자동 불꽃 켜기';
+    initAudio(); if(ac&&ac.state==='suspended'&&!muted)ac.resume();
+    if(!autoMode) hint.classList.remove('hide');
+  });
+  bigBtn.addEventListener('click',()=>{
+    initAudio(); if(ac&&ac.state==='suspended'&&!muted)ac.resume();
+    const spots=[[W*.25,H*.35],[W*.5,H*.28],[W*.75,H*.36]];
+    spots.forEach((p,i)=>setTimeout(()=>launch(p[0],p[1],'grand'),i*260));
+    hint.classList.add('hide');
+  });
+  // 첫 화면부터 자동으로 축제 분위기 연출
+  setTimeout(()=>{ if(autoMode) launch(W*.28,H*.38,'auto'); },500);
+})();
+</script>
+</body>
+</html>
